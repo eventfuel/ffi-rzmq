@@ -47,8 +47,8 @@ module ZMQ
       end # each socket_type
 
       it "should set the :socket accessor to the raw socket allocated by libzmq" do
-        socket = mock('socket')
-        socket.stub!(:null? => false)
+        socket = double('socket')
+        socket.stub(:null? => false)
         LibZMQ.should_receive(:zmq_socket).and_return(socket)
 
         sock = Socket.new(@ctx.pointer, ZMQ::REQ)
@@ -58,6 +58,13 @@ module ZMQ
       it "should define a finalizer on this object" do
         ObjectSpace.should_receive(:define_finalizer).at_least(1)
         sock = Socket.new(@ctx.pointer, ZMQ::REQ)
+        sock.close
+      end
+
+      it "should track pid in finalizer so subsequent fork will not segfault" do
+        sock = Socket.new(@ctx.pointer, ZMQ::REQ)
+        pid = fork { }
+        Process.wait(pid)
         sock.close
       end
     end # context initializing
@@ -268,7 +275,17 @@ module ZMQ
             end
           end # context using option ZMQ::IPV4ONLY
 
-
+          context "using option ZMQ::LAST_ENDPOINT" do
+            it "should return last enpoint" do
+              random_port = bind_to_random_tcp_port(socket, max_tries = 500)
+              array = []
+              rc = socket.getsockopt(ZMQ::LAST_ENDPOINT, array)
+              ZMQ::Util.resultcode_ok?(rc).should == true
+              endpoint_regex = %r{\Atcp://(.*):(\d+)\0\z}
+              array[0].should =~ endpoint_regex
+              Integer(array[0][endpoint_regex, 2]).should == random_port
+            end
+          end
         end # version2? if/else block
 
 
@@ -477,7 +494,7 @@ module ZMQ
               array = []
               rc = socket.getsockopt(ZMQ::FD, array)
               rc.should == 0
-              array[0].should be_a(Fixnum)
+              array[0].should > 0
             end
 
             it "returns a valid FD that is accepted by the system poll() function" do

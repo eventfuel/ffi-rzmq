@@ -23,14 +23,6 @@ def version3?
 end
 
 
-SLEEP_SHORT = 0.1
-SLEEP_LONG = 0.3
-
-def delivery_sleep() sleep(SLEEP_SHORT); end
-def connect_sleep() sleep(SLEEP_SHORT); end
-def bind_sleep() sleep(SLEEP_LONG); end
-def thread_startup_sleep() sleep(1.0); end
-
 def connect_to_inproc(socket, endpoint)
   begin
     rc = socket.connect(endpoint)
@@ -38,16 +30,6 @@ def connect_to_inproc(socket, endpoint)
 end
 
 module APIHelper
-  def stub_libzmq
-    @err_str_mock = mock("error string")
-
-    LibZMQ.stub!(
-    :zmq_init => 0,
-    :zmq_errno => 0,
-    :zmq_sterror => @err_str_mock
-    )
-  end
-
   def poller_setup
     @helper_poller ||= ZMQ::Poller.new
   end

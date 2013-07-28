@@ -1,3 +1,53 @@
+== 1.0.1 / 20130318
+	* Fix for issue #77 was not included in 1.0.0 release by mistake.
+	
+	* Add MIR 2.0.0 to travis runs.
+	
+	* Add support for LAST_ENDPOINT and MULTICAST_HOPS to Socket#getsockopt.
+
+== 1.0.0 / 20130109
+	*	Fix for issue #74 (send_multiple improperly handled single part messages).
+	
+	* Fix for issue #77 (unbind and disconnect).
+	
+	*	Fix for issue #75 (socket monitor events).
+	
+	*	The API is stable. Releasing 1.0.
+
+== 0.9.7 / 20121221
+  * BROKE THE API.
+    ZMQ::Poller#register and ZMQ::Poller#deregister don't take fd argument
+    anymore. ZMQ::Poller#readables and ZMQ::Poller#writables return pollables
+    instead of just fd when pollable is other than ZMQ socket.
+    ZMQ::Poller#register now returns nil instead of false when no pollable
+    or events to register to are given, which is consistent with rest of api.
+		Thanks to Pawel Pacana for this code contribution.
+
+  * Added support in ZMQ::Poller for pollables responding to fileno and socket.
+    Standard Ruby Sockets and IOs can be now registered in poller to listen for
+    events. Thanks to Pawel Pacana for this code contribution.
+
+  * Fixed a bug in ZMQ::Poller#deregister where it would raise exception
+    when trying to deregister already closed ZMQ socket. Issue 59.
+
+  * Improved specs to use random inproc socket address to avoid race conditions 
+    between tests under same context.
+
+  * Added continous integration for all supported platforms on Travis-CI.
+		Thanks to Pawel Pacana for this code contribution.
+
+	*	Signed up for codeclimate.com and made some code changes to get a better
+		"grade" from it.
+		
+	*	Modified the library to *always* load the 'ffi' library upon startup. It 
+		used to be conditional for Rubinius. Thanks to brixen for the change.
+		
+	*	There was a little bit of churn on the zmq "monitor" api. Thanks to
+		Nilson Santos F. Jr. for some code to conditionally attach to the
+		appropriate api depending on library version.
+		
+	
+
 == 0.9.6 / 20120808
   * Never released 0.9.5 as a gem. It was available via github only.
   

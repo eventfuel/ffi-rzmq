@@ -263,15 +263,7 @@ module ZMQ
     # cause.
     #
     def send_strings parts, flags = 0
-      return -1 if !parts || parts.empty?
-      flags = NonBlocking if dontwait?(flags)
-
-      parts[0..-2].each do |part|
-        rc = send_string part, (flags | ZMQ::SNDMORE)
-        return rc unless Util.resultcode_ok?(rc)
-      end
-
-      send_string parts[-1], flags
+      send_multiple(parts, flags, :send_string)
     end
 
     # Send a sequence of messages as a multipart message out of the +parts+
@@ -289,15 +281,7 @@ module ZMQ
     # cause.
     #
     def sendmsgs parts, flags = 0
-      return -1 if !parts || parts.empty?
-      flags = NonBlocking if dontwait?(flags)
-
-      parts[0..-2].each do |part|
-        rc = sendmsg part, (flags | ZMQ::SNDMORE)
-        return rc unless Util.resultcode_ok?(rc)
-      end
-
-      sendmsg parts[-1], flags
+      send_multiple(parts, flags, :sendmsg)
     end
 
     # Sends a message. This will automatically close the +message+ for both successful
@@ -444,6 +428,23 @@ module ZMQ
 
 
     private
+    
+    def send_multiple(parts, flags, method_name)
+      if !parts || parts.empty?
+        -1
+      else
+        flags = NonBlocking if dontwait?(flags)
+        rc = 0
+        
+        parts[0..-2].each do |part|
+          rc = send(method_name, part, (flags | ZMQ::SNDMORE))
+          break unless Util.resultcode_ok?(rc)
+        end
+        
+        Util.resultcode_ok?(rc) ? send(method_name, parts[-1], flags) : rc
+      end
+      
+    end
 
     def __getsockopt__ name, array
       # a small optimization so we only have to determine the option
@@ -473,39 +474,19 @@ module ZMQ
     def sockopt_buffers option_type
       if 1 == option_type
         # int64_t or uint64_t
-        unless @longlong_cache
-          length = FFI::MemoryPointer.new :size_t
-          length.write_int 8
-          @longlong_cache = [FFI::MemoryPointer.new(:int64), length]
-        end
-
-        @longlong_cache
+        @longlong_cache ||= alloc_pointer(:int64, 8)
 
       elsif 0 == option_type
         # int, 0mq assumes int is 4-bytes
-        unless @int_cache
-          length = FFI::MemoryPointer.new :size_t
-          length.write_int 4
-          @int_cache = [FFI::MemoryPointer.new(:int32), length]
-        end
-
-        @int_cache
+        @int_cache ||= alloc_pointer(:int32, 4)
 
       elsif 2 == option_type
-        length = FFI::MemoryPointer.new :size_t
-        # could be a string of up to 255 bytes
-        length.write_int 255
-        [FFI::MemoryPointer.new(255), length]
+        # could be a string of up to 255 bytes, so allocate for worst case
+        alloc_pointer(255, 255)
 
       else
         # uh oh, someone passed in an unknown option; use a slop buffer
-        unless @int_cache
-          length = FFI::MemoryPointer.new :size_t
-          length.write_int 4
-          @int_cache = [FFI::MemoryPointer.new(:int32), length]
-        end
-
-        @int_cache
+        @int_cache ||= alloc_pointer(:int32, 4)
       end
     end
 
@@ -529,6 +510,12 @@ module ZMQ
       (NonBlocking & flags) == NonBlocking
     end
     alias :noblock? :dontwait?
+    
+    def alloc_pointer(kind, length)
+      pointer = FFI::MemoryPointer.new :size_t
+      pointer.write_int(length)
+      [FFI::MemoryPointer.new(kind), pointer]
+    end
   end # module CommonSocketBehavior
 
 
@@ -642,15 +629,17 @@ module ZMQ
       # module; they *must* be in the class definition directly
 
       def define_finalizer
-        ObjectSpace.define_finalizer(self, self.class.close(@socket))
+        ObjectSpace.define_finalizer(self, self.class.close(@socket, Process.pid))
       end
 
       def remove_finalizer
         ObjectSpace.undefine_finalizer self
       end
 
-      def self.close socket
-        Proc.new { LibZMQ.zmq_close socket }
+      def self.close socket, pid
+        Proc.new do
+          LibZMQ.zmq_close(socket) if socket && !socket.nil? && Process.pid == pid
+        end
       end
     end # class Socket for version2
 
@@ -714,7 +703,7 @@ module ZMQ
       # Disconnect the socket from the given +endpoint+.
       #
       def disconnect(endpoint)
-        LibZMQ.zmq_disconnect(endpoint)
+        LibZMQ.zmq_disconnect(socket, endpoint)
       end
       
       # Version3 only
@@ -722,7 +711,7 @@ module ZMQ
       # Unbind the socket from the given +endpoint+.
       #
       def unbind(endpoint)
-        LibZMQ.zmq_unbind(endpoint)
+        LibZMQ.zmq_unbind(socket, endpoint)
       end
 
 
@@ -742,25 +731,29 @@ module ZMQ
         # integer options
         [RECONNECT_IVL_MAX, RCVHWM, SNDHWM, RATE, RECOVERY_IVL, SNDBUF, RCVBUF, IPV4ONLY,
           ROUTER_BEHAVIOR, TCP_KEEPALIVE, TCP_KEEPALIVE_CNT,
-          TCP_KEEPALIVE_IDLE, TCP_KEEPALIVE_INTVL, TCP_ACCEPT_FILTER].each { |option| @option_lookup[option] = 0 }
-          
+          TCP_KEEPALIVE_IDLE, TCP_KEEPALIVE_INTVL, TCP_ACCEPT_FILTER, MULTICAST_HOPS
+        ].each { |option| @option_lookup[option] = 0 }
+
         # long long options
         [MAXMSGSIZE].each { |option| @option_lookup[option] = 1 }
+
+        # string options
+        [LAST_ENDPOINT].each { |option| @option_lookup[option] = 2 }
       end
 
       # these finalizer-related methods cannot live in the CommonSocketBehavior
       # module; they *must* be in the class definition directly
 
       def define_finalizer
-        ObjectSpace.define_finalizer(self, self.class.close(@socket))
+        ObjectSpace.define_finalizer(self, self.class.close(@socket, Process.pid))
       end
 
       def remove_finalizer
         ObjectSpace.undefine_finalizer self
       end
 
-      def self.close socket
-        Proc.new { LibZMQ.zmq_close socket }
+      def self.close socket, pid
+        Proc.new { LibZMQ.zmq_close socket if Process.pid == pid }
       end
     end # Socket for version3
   end # LibZMQ.version3?
